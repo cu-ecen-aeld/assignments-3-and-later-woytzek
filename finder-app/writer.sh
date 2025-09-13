@@ -16,7 +16,7 @@ if [ $# -eq 2 ]; then
     echo "$fdir doesn't exist. Creating directory ..."
     mkdir -p $fdir
     if [ ! $? -eq 0 ]; then
-      echo Cannot create directory $fdir. Exiting ...
+      echo Cannot create directory $fdir, exiting ...
       exit 1
     fi
   fi
