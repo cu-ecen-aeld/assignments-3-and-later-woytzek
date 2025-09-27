@@ -1,3 +1,8 @@
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "systemcalls.h"
 
 /**
@@ -16,8 +21,8 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
-
-    return true;
+    int status = system( cmd );
+    return (status == 0);
 }
 
 /**
@@ -58,10 +63,40 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    pid_t child_pid = fork();
+    bool status;
+    if( -1 == child_pid )
+    {
+      /* failure */
+      status = false;
+    }
+    else
+    {
+      if( 0 == child_pid )
+      {
+        /* child process */
+        execv( command[0], command );
+        /* shall never be here */
+        exit(-1);
+      }
+      else
+      {
+        /* parent process */
+        int wstat;
+        if( child_pid == waitpid( child_pid, &wstat, 0 ))
+        {
+          status = (wstat == 0);
+        }
+        else
+        {
+          status = false;
+        }
+      }
+    }
 
     va_end(args);
 
-    return true;
+    return status;
 }
 
 /**
@@ -92,8 +127,51 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    int fd = open( outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644 );
+    if( fd < 0 )
+    {
+       printf("Error: cannot open output file %s\n", outputfile );
+       return false;
+    }
+
+    pid_t child_pid = fork();
+    bool status;
+    if( -1 == child_pid )
+    {
+      /* failure */
+      status = false;
+    }
+    else
+    {
+      if( 0 == child_pid )
+      {
+        /* child process */
+        if( dup2( fd, 1 ) < 0 )
+        {
+          exit(-1);
+        }
+        close( fd );
+        execv( command[0], command );
+        /* shall never be here */
+        exit(-1);
+      }
+      else
+      {
+        /* parent process */
+        close( fd );
+        int wstat;
+        if( child_pid == waitpid( child_pid, &wstat, 0 ))
+        {
+          status = (wstat == 0);
+        }
+        else
+        {
+          status = false;
+        }
+      }
+    }
 
     va_end(args);
 
-    return true;
+    return status;
 }
