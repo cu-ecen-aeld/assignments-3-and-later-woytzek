@@ -152,7 +152,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         }
         close( fd );
         execv( command[0], command );
-        /* shall never be here */
+        /* shall never be here  */
         exit(-1);
       }
       else
