@@ -98,6 +98,7 @@ bool start_thread_obtaining_mutex(pthread_t *thread, pthread_mutex_t *mutex,int 
     tdata->time_to_obtain_ms = wait_to_obtain_ms;
     tdata->time_to_release_ms = wait_to_release_ms;
     tdata->mutex = mutex;
+
     if( 0 != pthread_create( thread, NULL, &threadfunc, tdata ))
     {
       ERROR_LOG( "failed when starting thread" );
