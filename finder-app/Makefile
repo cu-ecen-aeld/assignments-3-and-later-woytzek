@@ -1,10 +1,10 @@
-COMPILER=$(CROSS_COMPILE)gcc
+CC ?= $(CROSS_COMPILE)gcc
 
 all: build
 
 build:
-	$(COMPILER) -c writer.c
-	$(COMPILER) writer.o -o writer
+	$(CC) -c writer.c
+	$(CC) writer.o -o writer
 
 clean:
 	rm -f writer.o
