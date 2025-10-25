@@ -3,10 +3,7 @@ CC ?= $(CROSS_COMPILE)gcc
 all: aesdsocket
 
 aesdsocket: aesdsocket.o
-	$(CC) aesdsocket.o -o aesdsocket
-
-easdsocket.o: aesdsocket.c
-	$(CC) -c -Wall -Werror aesdsocket.c
+	$(CC) -g -O0 -Wall -Werror aesdsocket.c -o aesdsocket
 
 clean:
 	rm -f aesdsocket.o
