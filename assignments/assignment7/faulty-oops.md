@@ -50,7 +50,7 @@ Code: d2800001 d2800000 d503233f d50323bf (b900003f)
 `Unable to handle kernel NULL pointer dereference at virtual address 0000000000000000`  
 indicates rootcause of message which is writing into NULL pointer  
   
-`CPU: 0 PID: 130 Comm: sh`
+`CPU: 0 PID: 130 Comm: sh`  
 error occurred on CPU 0, process ID is 130 which is shell command  
   
 `pc : faulty_write+0x10/0x20 [faulty]`  
@@ -76,3 +76,14 @@ Looking for `faulty_write` function in disassembled code:
 ```
 Offset 0x10 is instruction `str     wzr, [x1]` which is storing 0 (wzr register) in location pointed by content of x1 register. The problem is that x1 contains 0 (see instruction at 0x00 offset `mov     x1, #0x0`), so we have writing into NULL pointer.  
   
+Going to `faulty.c` source code, `faulty_write` function:
+```
+ssize_t faulty_write (struct file *filp, const char __user *buf, size_t count,
+		loff_t *pos)
+{
+	/* make a simple fault by dereferencing a NULL pointer */
+	*(int *)0 = 0;
+	return 0;
+}
+```
+Obviously the error is caused by line `*(int *)0 = 0;`  
