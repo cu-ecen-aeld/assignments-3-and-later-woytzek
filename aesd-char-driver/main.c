@@ -17,11 +17,14 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <sys/queue.h> // single-linked list
+#include <linux/mutex.h>
 #include "aesdchar.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("woytzek"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
@@ -55,14 +58,53 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     return retval;
 }
 
-ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
-                loff_t *f_pos)
+ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle write
      */
+    char *kbuf = kmalloc(count, GFP_KERNEL);
+    if( kbuf == NULL )
+    {
+        PDEBUG("kmalloc for kbuf failed");
+        return retval;
+    }
+
+    /* copy data */
+    if( copy_from_user( kbuf, buf, count ) != 0 )
+    {
+        kfree( kbuf );
+        PDEBUG("copy_from_user failed");
+        return -EFAULT;
+    }
+
+    /* check if data ends with new line */
+    if( kbuf[count - 1] == '\n' )
+    {
+        struct aesd_buffer_entry new_entry = 
+        {
+            .buffptr = kbuf,
+            .size = count
+        };
+        mutex_lock( &aesd_device.lock );
+        const char *buf2free = aesd_circular_buffer_add_entry( &aesd_device.circular_buffer, &new_entry );
+        mutex_unlock( &aesd_device.lock );
+
+        if( buf2free != NULL )
+        {
+            kfree( (void *)buf2free );
+        }
+        retval = count;
+    }
+    else
+    {
+        /* TODO */
+        kfree( kbuf );
+        retval = -EAGAIN;
+    }
+
     return retval;
 }
 struct file_operations aesd_fops = {
@@ -105,6 +147,8 @@ int aesd_init_module(void)
     /**
      * TODO: initialize the AESD specific portion of the device
      */
+    aesd_circular_buffer_init(&aesd_device.circular_buffer);
+    mutex_init(&aesd_device.lock);
 
     result = aesd_setup_cdev(&aesd_device);
 
