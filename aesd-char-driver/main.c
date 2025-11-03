@@ -17,7 +17,6 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
-#include <sys/queue.h> // single-linked list
 #include <linux/mutex.h>
 #include "aesdchar.h"
 
