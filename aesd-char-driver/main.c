@@ -186,7 +186,12 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
                 return retval;
             }
             msg_part.message = new_msg;
-            memcpy( msg_part.message + msg_part.length, kbuf, count );
+            if( copy_from_user( msg_part.message + msg_part.length, buf, count ) != 0 )
+            {
+                //kfree( kbuf );
+                PDEBUG("copy_from_user failed");
+                return -EFAULT;
+            }
             msg_part.length += count;
             kfree( kbuf );
 
@@ -195,7 +200,18 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
         else
         {
             /* first part */
-            msg_part.message = kbuf;
+            msg_part.message = kmalloc( count, GFP_KERNEL );
+            if( msg_part.message == NULL )
+            {
+                PDEBUG("kmalloc for msg_part.message failed");
+                return retval;
+            }
+            if( copy_from_user( msg_part.message, buf, count ) != 0 )
+            {
+                kfree( msg_part.message );
+                PDEBUG("copy_from_user failed");
+                return -EFAULT;
+            }
             msg_part.length = count;
 
             PDEBUG("stored message length %zu", msg_part.length);
