@@ -136,6 +136,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
             /* reset part */
             msg_part.message = NULL;
             msg_part.length = 0;
+
+            PDEBUG("combined message length %zu", count);
         }
         else
         {
@@ -152,6 +154,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
                 PDEBUG("copy_from_user failed");
                 return -EFAULT;
             }
+
+            PDEBUG("single message length %zu", count);
         }
         struct aesd_buffer_entry new_entry = 
         {
@@ -185,12 +189,16 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
             memcpy( msg_part.message + msg_part.length, kbuf, count );
             msg_part.length += count;
             kfree( kbuf );
+
+            PDEBUG("appended message length %zu", msg_part.length);
         }
         else
         {
             /* first part */
             msg_part.message = kbuf;
             msg_part.length = count;
+
+            PDEBUG("stored message length %zu", msg_part.length);
         }
         retval = count;
     }
