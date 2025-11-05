@@ -110,6 +110,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     get_user( eol, buf + count - 1 );
     if( eol == '\n' )
     {
+        size_t msg_length;
         if( msg_part.message != NULL )
         {
             /* append to previous part */
@@ -131,7 +132,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
             //kfree( kbuf );
 
             kbuf = msg_part.message;
-            count = msg_part.length;
+            msg_length = msg_part.length;
+            //count = msg_part.length;
 
             /* reset part */
             msg_part.message = NULL;
@@ -154,13 +156,14 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
                 PDEBUG("copy_from_user failed");
                 return -EFAULT;
             }
+            msg_length = count;
 
             PDEBUG("single message length %zu", count);
         }
         struct aesd_buffer_entry new_entry = 
         {
             .buffptr = kbuf,
-            .size = count
+            .size = msg_length
         };
         mutex_lock( &aesd_device.lock );
         const char *buf2free = aesd_circular_buffer_add_entry( &aesd_device.circular_buffer, &new_entry );
