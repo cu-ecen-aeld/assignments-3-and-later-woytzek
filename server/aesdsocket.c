@@ -17,7 +17,11 @@
 #include <sys/queue.h>
 
 #define PORT_NUMBER "9000"
-#define AESD_DATA_FILE "/var/tmp/aesdsocketdata"
+#if USE_AESD_CHAR_DEVICE == 1
+	#define AESD_DATA_FILE "/dev/aesdchar"
+#else
+	#define AESD_DATA_FILE "/var/tmp/aesdsocketdata"
+#endif
 #define RECV_BUF_SIZE 1024
 
 struct thread_data
@@ -50,6 +54,8 @@ static void signal_handler( int signal )
 
 static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mutex )
 {
+	int fd;
+
 	/* receive message */
 	char buf[RECV_BUF_SIZE] = {0};
 	int rcvlen = recv( acceptedfd, buf, RECV_BUF_SIZE, 0 );
@@ -62,24 +68,27 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 
 	/* open file to collect message */
 	pthread_mutex_lock(mutex);
-	int fd = open( AESD_DATA_FILE, O_CREAT | O_APPEND | O_WRONLY, 0666 );
-	if( fd < 0 )
-	{
-		pthread_mutex_unlock(mutex);
-		/* error */
-		syslog( LOG_ERR, "Cannot open file: %s", strerror( errno ));
-		return -1;
-	}
 
 	/* complete message */
 	while( rcvlen > 0 )
 	{
+#if USE_AESD_CHAR_DEVICE == 1
+		fd = open( AESD_DATA_FILE, O_WRONLY | O_APPEND );
+#else
+		fd = open( AESD_DATA_FILE, O_CREAT | O_APPEND | O_WRONLY, 0666 );
+#endif
+		if( fd < 0 )
+		{
+			pthread_mutex_unlock(mutex);
+			/* error */
+			syslog( LOG_ERR, "Cannot open file: %s", strerror( errno ));
+			return -1;
+		}
 		write( fd, buf, rcvlen );
+		close(fd);
 		rcvlen = recv( acceptedfd, buf, RECV_BUF_SIZE, MSG_DONTWAIT );
 	}
 
-	close( fd );
-	
 	/* ignore EAGAIN error, it indicates 'no more data' to receive */
 	if( rcvlen < 0 && errno != EAGAIN )
 	{
@@ -92,13 +101,15 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 	/* re-open file for reading */
 	fd = open( AESD_DATA_FILE, O_RDONLY );
 	int rdlen = read( fd, buf, RECV_BUF_SIZE );
+	close(fd);
 	/* and send back file content */
 	while( rdlen > 0 )
 	{
 		send( acceptedfd, buf, rdlen, 0 );
+		fd = open( AESD_DATA_FILE, O_RDONLY );
 		rdlen = read( fd, buf, RECV_BUF_SIZE );
+		close(fd);
 	}
-	close( fd );
 	pthread_mutex_unlock(mutex);
 
 	return 0;
@@ -226,6 +237,7 @@ cleanup:
 	return -1;
 }
 
+#if USE_AESD_CHAR_DEVICE != 1
 static void* timestamp_thread( void* arg )
 {
 	syslog( LOG_DEBUG, "Timestamp thread started" );
@@ -274,13 +286,16 @@ static void* timestamp_thread( void* arg )
 	syslog( LOG_DEBUG, "Timestamp thread exiting" );
 	return NULL;
 }
+#endif
 
 int main( int argc, char** argv )
 {
 	int sfd = -1; 
 	struct addrinfo *sainfo = NULL;
 	bool deamon = false;
+#if USE_AESD_CHAR_DEVICE != 1	
 	pthread_t timestamp_tid = 0;
+#endif
 
 	/* open log */
 	openlog( "server", 0, LOG_USER );
@@ -373,12 +388,14 @@ int main( int argc, char** argv )
 		goto cleanup;
 	}
 
+#if USE_AESD_CHAR_DEVICE != 1
 	/* create timestamp thread */
 	if( 0 != pthread_create( &timestamp_tid, NULL, &timestamp_thread, NULL ))
 	{
 		syslog( LOG_ERR, "Cannot create timestamp thread: %s", strerror( errno ));
 		goto cleanup;
 	}
+#endif
 
 	/* main loop */
 	atomic_store(&running, true);
@@ -392,16 +409,20 @@ int main( int argc, char** argv )
 		}
 	} /* end of running */
 
+#if USE_AESD_CHAR_DEVICE != 1
 	remove( AESD_DATA_FILE );
+#endif
 	syslog( LOG_INFO, "Caught signal, exiting" );
 
 	close( sfd );
 	freeaddrinfo( sainfo );
+#if USE_AESD_CHAR_DEVICE != 1
 	if( timestamp_tid != 0 )
 	{
 		pthread_kill( timestamp_tid, SIGTERM );
 		pthread_join( timestamp_tid, NULL );
 	}
+#endif
 	closelog();
 
 	return 0;
@@ -411,11 +432,13 @@ cleanup:
 		close( sfd );
 	if( sainfo )
 		freeaddrinfo( sainfo );
+#if USE_AESD_CHAR_DEVICE != 1
 	if( timestamp_tid != 0 )
 	{
 		pthread_kill( timestamp_tid, SIGTERM );
 		pthread_join( timestamp_tid, NULL );
 	}
+#endif
 	closelog();
 	return -1;
 }
