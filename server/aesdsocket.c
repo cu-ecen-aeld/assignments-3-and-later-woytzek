@@ -16,6 +16,10 @@
 #include <pthread.h>
 #include <sys/queue.h>
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
 #define PORT_NUMBER "9000"
 #if USE_AESD_CHAR_DEVICE == 1
 	#define AESD_DATA_FILE "/dev/aesdchar"
@@ -59,10 +63,12 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 	/* receive message */
 	char buf[RECV_BUF_SIZE] = {0};
 	int rcvlen = recv( acceptedfd, buf, RECV_BUF_SIZE, 0 );
+	syslog( LOG_DEBUG, "Received %d bytes on fd %d", rcvlen, acceptedfd );
 	if( rcvlen == 0 )
 	{
 		/* disconnected */
 		*connected = false;
+		syslog( LOG_DEBUG, "Client disconnected on fd %d", acceptedfd );
 		return 0;
 	}
 
@@ -70,24 +76,25 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 	pthread_mutex_lock(mutex);
 
 	/* complete message */
+#if USE_AESD_CHAR_DEVICE == 1
+	fd = open( AESD_DATA_FILE, O_WRONLY | O_APPEND );
+#else
+	fd = open( AESD_DATA_FILE, O_CREAT | O_APPEND | O_WRONLY, 0666 );
+#endif
+	if( fd < 0 )
+	{
+		pthread_mutex_unlock(mutex);
+		/* error */
+		syslog( LOG_ERR, "Cannot open file %s: %s", AESD_DATA_FILE, strerror( errno ));
+		return -1;
+	}
 	while( rcvlen > 0 )
 	{
-#if USE_AESD_CHAR_DEVICE == 1
-		fd = open( AESD_DATA_FILE, O_WRONLY | O_APPEND );
-#else
-		fd = open( AESD_DATA_FILE, O_CREAT | O_APPEND | O_WRONLY, 0666 );
-#endif
-		if( fd < 0 )
-		{
-			pthread_mutex_unlock(mutex);
-			/* error */
-			syslog( LOG_ERR, "Cannot open file: %s", strerror( errno ));
-			return -1;
-		}
 		write( fd, buf, rcvlen );
-		close(fd);
 		rcvlen = recv( acceptedfd, buf, RECV_BUF_SIZE, MSG_DONTWAIT );
 	}
+	close(fd);
+	syslog( LOG_DEBUG, "Completed receiving message on fd %d", acceptedfd );
 
 	/* ignore EAGAIN error, it indicates 'no more data' to receive */
 	if( rcvlen < 0 && errno != EAGAIN )
@@ -99,17 +106,20 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 	}
 
 	/* re-open file for reading */
+	syslog( LOG_DEBUG, "Sending back file content on fd %d", acceptedfd );
 	fd = open( AESD_DATA_FILE, O_RDONLY );
 	int rdlen = read( fd, buf, RECV_BUF_SIZE );
-	close(fd);
+	syslog( LOG_DEBUG, "Read %d bytes from file %s", rdlen, AESD_DATA_FILE );
 	/* and send back file content */
 	while( rdlen > 0 )
 	{
 		send( acceptedfd, buf, rdlen, 0 );
-		fd = open( AESD_DATA_FILE, O_RDONLY );
+		syslog( LOG_DEBUG, "Sent back %d bytes on fd %d", rdlen, acceptedfd );
 		rdlen = read( fd, buf, RECV_BUF_SIZE );
-		close(fd);
+		syslog( LOG_DEBUG, "Read %d bytes from file %s", rdlen, AESD_DATA_FILE );
 	}
+	close(fd);
+	syslog( LOG_DEBUG, "Sent back file content on fd %d", acceptedfd );
 	pthread_mutex_unlock(mutex);
 
 	return 0;
@@ -134,11 +144,13 @@ void* connection_thread( void* arg )
 			syslog( LOG_ERR, "Error handling message: %s", strerror( errno ));
 			goto cleanup;
 		}
+		syslog( LOG_DEBUG, "Handled message on fd %d", acceptedfd );
 		if( !connected )
 		{
 			/* client disconnected */
 			tdata->success = true;
 			tdata->finished = true;
+			syslog( LOG_DEBUG, "Client disconnected on fd %d", acceptedfd );
 		}
 	} /* end of connected */
 	return (void*)tdata;
@@ -160,6 +172,7 @@ static int handle_connection( int sfd )
 	if( !atomic_load(&running) )
 	{
 		/* if accept() interrupted by signal, break the loop */
+		syslog( LOG_DEBUG, "Not running anymore, exiting accept" );
 		return 0;
 	}
 	if( acceptedfd < 0 )
@@ -168,6 +181,7 @@ static int handle_connection( int sfd )
 		syslog( LOG_ERR, "Failed on accept: %s", strerror( errno ));
 		goto cleanup;
 	}
+	syslog( LOG_DEBUG, "Accepted connection on fd %d", acceptedfd );
 
 	/* create thread data and single-list node */
 	struct slist_data_s *node = calloc( 1, sizeof( struct slist_data_s ));
@@ -201,6 +215,7 @@ static int handle_connection( int sfd )
 		free( node );
 		goto cleanup;
 	}
+	syslog( LOG_DEBUG, "Created thread %ld for connection", node->thread );
 
 	/* check all threads in single-list */
 	bool node_removed;
@@ -227,6 +242,7 @@ static int handle_connection( int sfd )
 			}
 		}
 	} while( node_removed );
+	syslog( LOG_DEBUG, "Finished handling connection on fd %d", acceptedfd );
 
 	return 0;
 
@@ -299,7 +315,11 @@ int main( int argc, char** argv )
 
 	/* open log */
 	openlog( "server", 0, LOG_USER );
+#if USE_AESD_CHAR_DEVICE == 1
+	syslog( LOG_DEBUG, "AESD Socket Server Starting (using aeasdchar)" );
+#else
 	syslog( LOG_DEBUG, "AESD Socket Server Starting" );
+#endif
 
 	/* initialize single-list */
 	SLIST_INIT( &head );
@@ -329,6 +349,7 @@ int main( int argc, char** argv )
 		syslog( LOG_ERR, "Cannot add SIGTERM handler: %s", strerror( errno ));
 		goto cleanup;
 	}
+	syslog( LOG_DEBUG, "Signal handlers installed" );
 
 	/* create socket */
 	sfd = socket( AF_INET, SOCK_STREAM, 0 );
@@ -338,6 +359,7 @@ int main( int argc, char** argv )
 		syslog( LOG_ERR, "Cannot create socket: %s", strerror( errno ));
 		goto cleanup;
 	}
+	syslog( LOG_DEBUG, "Socket created" );
 	
 	/* bind socket */
 	int serr;
@@ -361,6 +383,7 @@ int main( int argc, char** argv )
 		syslog( LOG_ERR, "Cannot bind: %s", strerror( errno ));
 		goto cleanup;
 	}
+	syslog( LOG_DEBUG, "Socket bound to port %s", PORT_NUMBER );
 
 	/* deamonize if requested */
 	if( deamon )
@@ -375,6 +398,7 @@ int main( int argc, char** argv )
 		else if( pid > 0 )
 		{
 			/* parent */
+			syslog( LOG_DEBUG, "Deamonized, parent exiting" );
 			return 0;
 		}
 		/* child - deamon */ 
@@ -387,6 +411,7 @@ int main( int argc, char** argv )
 		syslog( LOG_ERR, "Failed when listening: %s", strerror( errno ));
 		goto cleanup;
 	}
+	syslog( LOG_DEBUG, "Socket listening" );
 
 #if USE_AESD_CHAR_DEVICE != 1
 	/* create timestamp thread */
@@ -395,6 +420,7 @@ int main( int argc, char** argv )
 		syslog( LOG_ERR, "Cannot create timestamp thread: %s", strerror( errno ));
 		goto cleanup;
 	}
+	syslog( LOG_DEBUG, "Timestamp thread created" );
 #endif
 
 	/* main loop */
@@ -405,6 +431,7 @@ int main( int argc, char** argv )
 		if( handle_connection( sfd ) != 0 )
 		{
 			/* error */
+			syslog( LOG_ERR, "Error handling connection" );
 			goto cleanup;
 		}
 	} /* end of running */
