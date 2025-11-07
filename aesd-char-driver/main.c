@@ -30,8 +30,18 @@ int aesd_open(struct inode *inode, struct file *filp);
 int aesd_release(struct inode *inode, struct file *filp);
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence);
 void aesd_cleanup_module(void);
 int aesd_init_module(void);
+
+struct file_operations aesd_fops = {
+    .owner =    THIS_MODULE,
+    .read =     aesd_read,
+    .write =    aesd_write,
+    .open =     aesd_open,
+    .release =  aesd_release,
+    .llseek =   aesd_llseek,
+};
 
 struct aesd_dev aesd_device;
 
@@ -225,13 +235,45 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     return retval;
 }
 
-struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
-};
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
+{
+    loff_t newpos = 0;
+
+    PDEBUG("llseek to offset %lld whence %d", offset, whence);
+    
+    size_t total_size = 0;
+    struct aesd_buffer_entry *entry;
+    int index;
+    mutex_lock( &aesd_device.lock );
+    AESD_CIRCULAR_BUFFER_FOREACH( entry, &aesd_device.circular_buffer, index ) 
+    {
+        total_size += entry->size;
+    }
+    mutex_unlock( &aesd_device.lock ); 
+
+    switch( whence )
+    {
+        case SEEK_SET:
+            newpos = offset;
+            break;
+        case SEEK_CUR:
+            newpos = filp->f_pos + offset;
+            break;
+        case SEEK_END:
+            newpos = total_size + offset;
+            break;
+        default:
+            return -EINVAL;
+    }
+
+    if( newpos < 0 || newpos > total_size )
+    {
+        return -EINVAL;
+    }
+
+    filp->f_pos = newpos;
+    return newpos;
+}
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {
