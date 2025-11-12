@@ -2,7 +2,7 @@ CC ?= $(CROSS_COMPILE)gcc
 CFLAGS ?= -g -O0 -Wall -Werror
 LDFLAGS ?= -lpthread -lrt
 TARGET ?= aesdsocket
-INCLUDES ?=
+INCLUDES ?= -I../aesd-char-driver
 
 USE_AESD_CHAR_DEVICE ?= 1
 

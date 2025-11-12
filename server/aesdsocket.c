@@ -15,6 +15,7 @@
 #include <stdatomic.h>
 #include <pthread.h>
 #include <sys/queue.h>
+#include "aesd_ioctl.h"
 
 #ifndef USE_AESD_CHAR_DEVICE
 #define USE_AESD_CHAR_DEVICE 1
@@ -72,6 +73,24 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 		return 0;
 	}
 
+	bool is_ioctl = false;
+#if USE_AESD_CHAR_DEVICE == 1
+	unsigned int write_cmd = 0;
+	unsigned int write_cmd_offset = 0;
+	/* check for ioctl command: */
+	/*   check if buf content equals to AESDCHAR_IOCSEEKTO:X,Y */
+	if( rcvlen > 18 && strncmp( buf, "AESDCHAR_IOCSEEKTO:", 18 ) == 0 )
+	{
+		/* parse write_cmd and write_cmd_offset */
+		int ret = sscanf( buf + 18, "%u,%u", &write_cmd, &write_cmd_offset );
+		if( ret == 2 )
+		{
+			is_ioctl = true;
+			syslog( LOG_DEBUG, "Parsed IOCTL command on fd %d: write_cmd=%u, write_cmd_offset=%u", acceptedfd, write_cmd, write_cmd_offset );
+		}
+	}
+#endif
+
 	/* open file to collect message */
 	pthread_mutex_lock(mutex);
 
@@ -88,12 +107,34 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 		syslog( LOG_ERR, "Cannot open file %s: %s", AESD_DATA_FILE, strerror( errno ));
 		return -1;
 	}
-	while( rcvlen > 0 )
+
+	if( is_ioctl )
 	{
-		write( fd, buf, rcvlen );
-		rcvlen = recv( acceptedfd, buf, RECV_BUF_SIZE, MSG_DONTWAIT );
+		/* perform ioctl */
+		syslog( LOG_DEBUG, "Performing IOCTL on fd %d", acceptedfd );
+		struct aesd_seekto seekto;
+		seekto.write_cmd = write_cmd;
+		seekto.write_cmd_offset = write_cmd_offset;
+		int ioctlret = ioctl( fd, AESDCHAR_IOCSEEKTO, &seekto );
+		if( ioctlret != 0 )
+		{
+			pthread_mutex_unlock(mutex);
+			/* error */
+			syslog( LOG_ERR, "IOCTL failed on fd %d: %s", acceptedfd, strerror( errno ));
+			close(fd);
+			return -1;
+		}
+		syslog( LOG_DEBUG, "IOCTL completed on fd %d", acceptedfd );
 	}
-	close(fd);
+	else
+	{
+		while( rcvlen > 0 )
+		{
+			write( fd, buf, rcvlen );
+			rcvlen = recv( acceptedfd, buf, RECV_BUF_SIZE, MSG_DONTWAIT );
+		}
+		close(fd);
+	}
 	syslog( LOG_DEBUG, "Completed receiving message on fd %d", acceptedfd );
 
 	/* ignore EAGAIN error, it indicates 'no more data' to receive */
@@ -107,7 +148,10 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 
 	/* re-open file for reading */
 	syslog( LOG_DEBUG, "Sending back file content on fd %d", acceptedfd );
-	fd = open( AESD_DATA_FILE, O_RDONLY );
+	if( !is_ioctl )
+	{
+		fd = open( AESD_DATA_FILE, O_RDONLY );
+	}
 	int rdlen = read( fd, buf, RECV_BUF_SIZE );
 	syslog( LOG_DEBUG, "Read %d bytes from file %s", rdlen, AESD_DATA_FILE );
 	/* and send back file content */
