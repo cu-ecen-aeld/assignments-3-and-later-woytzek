@@ -79,10 +79,12 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 	unsigned int write_cmd_offset = 0;
 	/* check for ioctl command: */
 	/*   check if buf content equals to AESDCHAR_IOCSEEKTO:X,Y */
-	if( rcvlen > 18 && strncmp( buf, "AESDCHAR_IOCSEEKTO:", 18 ) == 0 )
+	syslog( LOG_DEBUG, "Checking for IOCTL command on fd %d", acceptedfd );
+	if( rcvlen > 19 && strncmp( buf, "AESDCHAR_IOCSEEKTO:", 19 ) == 0 )
 	{
+		syslog( LOG_DEBUG, "Found IOCTL command prefix on fd %d", acceptedfd );
 		/* parse write_cmd and write_cmd_offset */
-		int ret = sscanf( buf + 18, "%u,%u", &write_cmd, &write_cmd_offset );
+		int ret = sscanf( buf + 19, "%u,%u", &write_cmd, &write_cmd_offset );
 		if( ret == 2 )
 		{
 			is_ioctl = true;
@@ -96,7 +98,7 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 
 	/* complete message */
 #if USE_AESD_CHAR_DEVICE == 1
-	fd = open( AESD_DATA_FILE, O_WRONLY | O_APPEND );
+	fd = open( AESD_DATA_FILE, O_RDWR | O_APPEND );
 #else
 	fd = open( AESD_DATA_FILE, O_CREAT | O_APPEND | O_WRONLY, 0666 );
 #endif
@@ -153,6 +155,14 @@ static int handle_message( int acceptedfd, bool *connected, pthread_mutex_t *mut
 		fd = open( AESD_DATA_FILE, O_RDONLY );
 	}
 	int rdlen = read( fd, buf, RECV_BUF_SIZE );
+	if( rdlen < 0 )
+	{
+		pthread_mutex_unlock(mutex);
+		/* error */
+		syslog( LOG_ERR, "Read failed from file %s: %s", AESD_DATA_FILE, strerror( errno ));
+		close(fd);
+		return -1;
+	}
 	syslog( LOG_DEBUG, "Read %d bytes from file %s", rdlen, AESD_DATA_FILE );
 	/* and send back file content */
 	while( rdlen > 0 )
